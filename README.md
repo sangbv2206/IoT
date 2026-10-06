@@ -95,5 +95,4 @@ Mở trình duyệt: `http://localhost:3000`
 | Email | Mật khẩu | Phân quyền / Ghi chú |
 |---|---|---|
 | `sa12@gmail.com` | `123456` | Tài khoản Sang (sang12) |
-| `sangbv2206@gmail.com` | `123456` | Quản trị viên |
-| `buivanchung22109@gmail.com` | `Admin@123` | Tài khoản test |
+
