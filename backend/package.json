@@ -5,7 +5,8 @@
   "main": "bridge.js",
   "scripts": {
     "start": "node -r dotenv/config bridge.js",
-    "dev": "nodemon -r dotenv/config bridge.js"
+    "dev": "nodemon -r dotenv/config bridge.js",
+    "sim": "node -r dotenv/config simulator.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.8",
