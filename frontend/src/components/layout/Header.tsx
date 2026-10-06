@@ -16,7 +16,6 @@ import {
   Clock,
   Pencil,
   RotateCcw,
-  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -88,7 +87,7 @@ export function Header({
   onMarkAllAsRead,
   bellPing,
   onOpen,
-  dark,
+  dark = false,
   toggleDark,
   openPalette,
   currentUser,
@@ -107,8 +106,8 @@ export function Header({
   onMarkAllAsRead: (ids: number[]) => void;
   bellPing: boolean;
   onOpen: () => void;
-  dark: boolean;
-  toggleDark: () => void;
+  dark?: boolean;
+  toggleDark?: () => void;
   openPalette: () => void;
   currentUser: { hoten: string; email: string } | null;
   onMenuClick?: () => void;
@@ -192,56 +191,7 @@ export function Header({
               </Badge>
             )}
           </div>
-
-          {/* Clock & Date Badge with Custom Time trigger */}
-          <button
-            onClick={handleOpenTimeDialog}
-            title="Nhấp để tùy chỉnh thời gian hệ thống"
-            className={cn(
-              "hidden sm:flex items-center gap-2 px-3 py-1 rounded-full border shadow-sm transition-all duration-300 cursor-pointer hover:scale-105 active:scale-95 select-none",
-              isCustom
-                ? "border-amber-400/70 bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold ring-2 ring-amber-400/30"
-                : dark
-                  ? "border-white/15 bg-white/10 text-slate-200 hover:bg-white/15"
-                  : "border-slate-300 bg-slate-100 text-slate-800 hover:bg-slate-200 font-semibold"
-            )}
-          >
-            <Clock className={cn("h-3.5 w-3.5", isCustom ? "text-amber-500 animate-spin" : "text-indigo-500 animate-pulse")} />
-            <span className="text-xs font-bold">
-              {currentTime.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-            </span>
-            <span className={cn("hidden md:inline", isCustom ? "text-amber-500/60" : "text-slate-400")}>|</span>
-            <span className="text-xs font-semibold hidden md:inline">
-              {currentTime.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" })}
-            </span>
-            {isCustom ? (
-              <Badge className="ml-1 px-1.5 py-0 text-[10px] bg-amber-500 text-white font-extrabold rounded-full">
-                Tùy chỉnh
-              </Badge>
-            ) : (
-              <Pencil className="h-3 w-3 text-slate-400 opacity-60 group-hover:opacity-100 ml-0.5" />
-            )}
-          </button>
         </div>
-
-        {currentUserRole !== "admin" && (
-          <div className="flex flex-wrap items-center gap-2 text-xs mt-1">
-            {/* Node Online/Offline Status */}
-            <div className={cn(
-              "flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-[11px] font-bold shadow-sm transition-all duration-300",
-              nodeOnline
-                ? dark
-                  ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-300"
-                  : "border-emerald-300 bg-emerald-100 text-emerald-800"
-                : dark
-                  ? "border-rose-500/30 bg-rose-500/15 text-rose-300"
-                  : "border-rose-300 bg-rose-100 text-rose-800"
-            )}>
-              <span className={cn("h-2 w-2 rounded-full", nodeOnline ? "bg-emerald-500 shadow-sm shadow-emerald-500/50" : "bg-rose-500 animate-pulse")} />
-              <span className="hidden sm:inline">{nodeName}: </span>{nodeOnline ? "Online" : "Offline"}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Search palette trigger */}
@@ -259,20 +209,6 @@ export function Header({
         <kbd className={cn("ml-2 rounded-md px-1.5 py-0.5 text-[10px] font-extrabold hidden lg:inline-block", dark ? "bg-white/15 text-slate-300" : "bg-slate-200 text-slate-700")}>
           Ctrl K
         </kbd>
-      </button>
-
-      {/* Dark mode toggle */}
-      <button
-        onClick={toggleDark}
-        aria-label="Chuyển giao diện"
-        className={cn(
-          "grid h-10 w-10 place-items-center rounded-xl border shadow-sm transition cursor-pointer",
-          dark
-            ? "border-white/15 bg-white/10 text-amber-300 hover:bg-white/15"
-            : "border-slate-300 bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900",
-        )}
-      >
-        {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </button>
 
       {/* Alert Dropdown */}
@@ -423,7 +359,7 @@ export function Header({
               </div>
               {isCustom && (
                 <div className="text-[11px] text-amber-600 dark:text-amber-400 font-bold flex items-center justify-center gap-1">
-                  <Sparkles className="h-3 w-3" /> Đang dùng thời gian giả lập (Offset)
+                  <Clock className="h-3 w-3" /> Đang dùng thời gian giả lập (Offset)
                 </div>
               )}
             </div>

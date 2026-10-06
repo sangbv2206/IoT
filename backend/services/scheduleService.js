@@ -1,123 +1,86 @@
+'use strict';
+
+const logger = require('../utils/logger');
 const supabaseService = require('./supabaseService');
 const mqttService = require('./mqttService');
-const logger = require('../utils/logger');
-
-let lastCheckedTime = '';
-
+const { getDeviceTopics, updateLocalDeviceCache } = require('./deviceSyncService');
 const { TOPIC_PREFIX } = require('../config/config');
 
-const DEVICE_CTRL_TOPICS = {
-  dieu_hoa: `${TOPIC_PREFIX}/led`,
-  quat: `${TOPIC_PREFIX}/led2`,
-  den: `${TOPIC_PREFIX}/led3`,
-};
+const CHECK_INTERVAL_MS = parseInt(process.env.SCHEDULE_CHECK_INTERVAL_MS || '15000', 10);
+let lastCheckedMinute = '';
 
-// Chuyển đổi sang múi giờ Việt Nam (UTC+7) để so sánh lịch hẹn
-function getVietnamTime() {
+function getVietnamNow() {
   const now = new Date();
-  // Tính offset UTC+7 = 7*60 phút
-  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
-  return new Date(utcMs + 7 * 60 * 60 * 1000);
+  const time = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false }).format(now);
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Ho_Chi_Minh', weekday: 'short' }).format(now);
+  const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return { time, day: dayMap[weekday] ?? now.getDay() };
 }
 
 const scheduleService = {
-  /**
-   * Khởi chạy trình kiểm tra lịch hẹn giờ định kỳ
-   */
+  
   start() {
-    logger.info('[Hẹn giờ] Bắt đầu khởi chạy dịch vụ lịch hẹn giờ (múi giờ: UTC+7 Việt Nam)...');
-    
-    // Kiểm tra mỗi 15 giây để tránh bị trượt phút
+    logger.info('[Hẹn giờ] Bắt đầu khởi chạy dịch vụ lịch hẹn giờ');
+
     setInterval(async () => {
-      // Dùng giờ Việt Nam thay vì giờ máy chủ
-      const vnNow = getVietnamTime();
-      const currentHour = String(vnNow.getHours()).padStart(2, '0');
-      const currentMin = String(vnNow.getMinutes()).padStart(2, '0');
-      const currentTime = `${currentHour}:${currentMin}`; // "HH:MM"
-      
-      // Nếu đã kiểm tra phút này rồi thì bỏ qua
-      if (currentTime === lastCheckedTime) {
-        return;
-      }
-      
-      lastCheckedTime = currentTime;
-      const currentDay = vnNow.getDay(); // 0: CN, 1: T2, ..., 6: T7 (theo giờ VN)
-      
-      logger.info(`[Hẹn giờ] Kiểm tra lịch lúc ${currentTime} (Thứ ${currentDay === 0 ? 'CN' : currentDay + 1}, giờ VN)`);
-
       try {
-        // Lấy tất cả lịch hẹn đang kích hoạt
-        const schedules = await supabaseService.getActiveSchedules();
-        const activeSchedules = schedules.filter(s => s.kichhoat === true);
-        
-        if (activeSchedules.length === 0) {
-          return;
-        }
-        
-        for (const schedule of activeSchedules) {
-          // Lấy phần giờ phút từ thoigian (ví dụ "18:30:00" -> "18:30")
-          const scheduleTime = schedule.thoigian.substring(0, 5);
-          
-          if (scheduleTime === currentTime) {
-            // Kiểm tra xem hôm nay có nằm trong các thứ được hẹn không
-            const daysArray = Array.isArray(schedule.thu) ? schedule.thu : [];
-            if (daysArray.includes(currentDay)) {
-              const targetState = schedule.hanhdong === 'on' ? 1 : 0;
-              
-              // Lấy tên thiết bị mới nhất
-              let deviceName = 'Thiết bị không xác định';
-              const id_thietbi = schedule.id_thietbi;
-              
-              if (schedule.thietbi) {
-                deviceName = schedule.thietbi.ten_hienthi || (schedule.thietbi.loai_thietbi === 'dieu_hoa' ? 'Điều hòa' : schedule.thietbi.loai_thietbi === 'quat' ? 'Quạt' : 'Đèn');
-              }
-              
-              logger.info(`[Hẹn giờ] ✅ Kích hoạt! ID=${schedule.idid}: ${schedule.hanhdong === 'on' ? 'BẬT' : 'TẮT'} ${deviceName}`);
-              
-              if (!id_thietbi) {
-                logger.warn(`[Hẹn giờ] Bỏ qua lịch ID=${schedule.idid}: không có id_thietbi`);
-                continue;
-              }
+        const { time, day } = getVietnamNow();
+        if (time === lastCheckedMinute) return;
+        lastCheckedMinute = time;
 
-              // Kiểm tra chế độ thiết bị trước khi thực hiện bất kỳ hành động nào
-              const isAutoMode = schedule.thietbi && schedule.thietbi.tu_dong === true;
+        const { data: schedules } = await supabaseService.supabase
+          .from('lichhengio')
+          .select('*, thietbi(*)')
+          .eq('kichhoat', true);
 
-              if (!isAutoMode) {
-                logger.info(`[Hẹn giờ] Bỏ qua lịch ID=${schedule.idid} cho ${deviceName} (Thiết bị ở chế độ thủ công)`);
-                continue;
-              }
+        for (const s of schedules || []) {
+          const sTime = String(s.thoigian || '').substring(0, 5);
+          if (sTime !== time || !(s.thu || []).includes(day) || !s.id_thietbi) continue;
 
-              // 1. Cập nhật trạng thái thiết bị trong Supabase (chỉ khi ở chế độ tự động)
-              await supabaseService.updateThietBiStatus(id_thietbi, targetState);
+          const target = s.hanhdong === 'on' ? 1 : 0;
+          const tb = s.thietbi, devId = s.id_thietbi;
+          const devName = tb?.ten_hienthi || tb?.loai_thietbi || 'Thiết bị';
+          const targetNode = tb?.idnode || s.idnode;
+          const prefix = targetNode ? `${TOPIC_PREFIX}/${targetNode}` : TOPIC_PREFIX;
 
-              // 2. Gửi lệnh MQTT trực tiếp đến ESP32 (phòng trường hợp Realtime mất kết nối)
-              if (schedule.thietbi && schedule.thietbi.idnode === 'ESP32-S3-Node-01') {
-                const ctrlTopic = DEVICE_CTRL_TOPICS[schedule.thietbi.loai_thietbi];
-                if (ctrlTopic) {
-                  const payload = targetState === 1 ? 'ON' : 'OFF';
-                  mqttService.publish(ctrlTopic, payload, { qos: 1 });
-                  logger.info(`[Hẹn giờ] Gửi MQTT trực tiếp: ${ctrlTopic} = ${payload} (Chế độ: Tự động)`);
-                }
-              }
-              
-              // 2. Ghi nhật ký hoạt động
-              await supabaseService.writeActionLog(
-                id_thietbi,
-                `Hẹn giờ: ${schedule.hanhdong === 'on' ? 'Bật' : 'Tắt'} ${deviceName} (Theo lịch ${schedule.thoigian})`,
-                null,
-                null, // idnguoidung = null để writeActionLog tự động lấy từ esp32_nodes
-                null, // idnode = null để writeActionLog tự động lấy từ thietbi
-                'user_action' // Hẹn giờ do user set, nên là user_action
-              );
-            } else {
-              logger.info(`[Hẹn giờ] Bỏ qua lịch ID=${schedule.idid}: hôm nay (${currentDay}) không nằm trong danh sách [${schedule.thu}]`);
+          logger.info(`[Hẹn giờ] Kích hoạt ID=${s.idid}: ${target ? 'BẬT' : 'TẮT'} "${devName}" (${time})`);
+
+          // 1. Cập nhật Cache & DB (tự động chuyển sang thủ công khi hẹn giờ chạy)
+          const props = tb?.loai_thietbi === 'rem_cua' ? { position: target ? 100 : 0 } : (tb?.cau_hinh || {});
+          updateLocalDeviceCache(devId, target, false, props);
+          await supabaseService.supabase.from('thietbi')
+            .update({
+              trangthai: target,
+              tu_dong: false,
+              cau_hinh: { ...(tb?.cau_hinh || {}), ...props },
+              thoigian_capnhat: new Date().toISOString()
+            })
+            .eq('id_thietbi', devId);
+
+          // 2. Gửi lệnh MQTT tới ESP32
+          const topics = getDeviceTopics(tb?.loai_thietbi, targetNode, tb);
+          if (topics?.ctrl) {
+            const payload = target === 1 ? 'ON' : 'OFF';
+            await mqttService.publish(topics.ctrl, payload, { qos: 1 });
+
+            // Bổ sung đồng bộ vị trí % cho rèm cửa
+            if (tb?.loai_thietbi === 'rem_cua') {
+              const pos = target === 1 ? 100 : 0;
+              await mqttService.publish(`${prefix}/rem_cua/pos`, String(pos), { qos: 1 });
             }
           }
+
+          // 3. Ghi nhật ký hoạt động
+          await supabaseService.writeActionLog(
+            devId,
+            `Hẹn giờ: ${target ? 'Bật' : 'Tắt'} ${devName} (${s.thoigian})`,
+            null, null, targetNode || null, 'user_action'
+          ).catch(() => {});
         }
       } catch (err) {
-        logger.error('Lỗi trong tiến trình kiểm tra lịch hẹn giờ:', err.message);
+        logger.error('[Hẹn giờ] Lỗi kiểm tra lịch:', err.message);
       }
-    }, 15000);
+    }, CHECK_INTERVAL_MS);
   }
 };
 

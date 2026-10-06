@@ -1,98 +1,80 @@
+'use strict';
 const mqtt = require('mqtt');
-const { mqttBrokerUrl, mqttPort, TOPICS } = require('../config/config');
+const { mqttBrokerUrl, mqttPort, TOPIC_PREFIX, TOPICS } = require('../config/config');
 const logger = require('../utils/logger');
 
 let client = null;
 
 const mqttService = {
-  /**
-   * Khởi tạo kết nối đến MQTT Broker
-   */
   connect(onMessageCallback, onConnectCallback) {
-    logger.info(`Đang kết nối đến MQTT Broker: ${mqttBrokerUrl}:${mqttPort}...`);
-    
-    client = mqtt.connect(mqttBrokerUrl, { 
+    if (client) { client.removeAllListeners(); client.end(true); client = null; }
+
+    const opts = {
       port: mqttPort,
-      reconnectPeriod: 3000, // Thử kết nối lại mỗi 3 giây nếu mất mạng
-      connectTimeout: 10000  // Timeout kết nối 10 giây
-    });
+      clientId: process.env.MQTT_CLIENT_ID || `backend_${Math.random().toString(16).slice(2, 8)}`,
+      reconnectPeriod: parseInt(process.env.MQTT_RECONNECT_MS || '3000', 10),
+      connectTimeout: parseInt(process.env.MQTT_TIMEOUT_MS || '10000', 10),
+      clean: true
+    };
+    if (process.env.MQTT_USERNAME) opts.username = process.env.MQTT_USERNAME;
+    if (process.env.MQTT_PASSWORD) opts.password = process.env.MQTT_PASSWORD;
+
+    logger.info(`Đang kết nối đến MQTT Broker: ${mqttBrokerUrl}:${mqttPort}...`);
+    client = mqtt.connect(mqttBrokerUrl, opts);
 
     client.on('connect', () => {
       logger.success('Kết nối thành công đến MQTT Broker!');
-      
-      // Đăng ký tất cả các topic cần nhận tin (với wildcard cho multi-node + legacy cho backward compatibility)
-      const topicsToSubscribe = [
+      const subs = [
         TOPICS.TEMP_WILDCARD, TOPICS.HUM_WILDCARD, TOPICS.LUX_WILDCARD,
-        TOPICS.TEMP_LEGACY, TOPICS.HUM_LEGACY, TOPICS.LUX_LEGACY,  // Legacy topics
-        TOPICS.GAS,
-        TOPICS.HEARTBEAT,
-        TOPICS.LED_STATE_WILDCARD, TOPICS.LED2_STATE_WILDCARD, TOPICS.LED3_STATE_WILDCARD,
-        TOPICS.LED1_STATE, TOPICS.LED2_STATE, TOPICS.LED3_STATE,  // Legacy state topics
-        TOPICS.AUTO_STATE_WILDCARD, TOPICS.AUTO2_STATE_WILDCARD, TOPICS.AUTO3_STATE_WILDCARD,
-        TOPICS.AUTO1_STATE, TOPICS.AUTO2_STATE, TOPICS.AUTO3_STATE  // Legacy auto topics
-      ];
-      
-      client.subscribe(topicsToSubscribe, (err) => {
-        if (err) {
-          logger.error('Lỗi khi subscribe các topic:', err);
-        } else {
-          logger.info('Đã subscribe thành công các topic:', topicsToSubscribe);
-        }
-      });
+        TOPICS.SENSORS_WILDCARD, TOPICS.HEARTBEAT, TOPICS.ALERT_WILDCARD,
+        TOPICS.ALL_DEVICE_STATES,             // {prefix}/+/+/state (2 cấp)
+        `${TOPIC_PREFIX}/+/+/+/state`,        // {prefix}/+/+/+/state (3 cấp: brightness, speed, pos)
+        TOPICS.WIFI_POWER_WILDCARD,           // {prefix}/+/wifi/power/state
+        `${TOPIC_PREFIX}/+/state`,            // {prefix}/+/state (legacy 1 cấp)
+        TOPICS.IR_RECEIVE_WILDCARD, TOPICS.SCENE_WILDCARD, TOPICS.SCENE_GLOBAL
+      ].filter(Boolean);
 
-      if (onConnectCallback) {
-        onConnectCallback();
-      }
+      client.subscribe(subs, (err) => {
+        if (err) logger.error('Lỗi khi subscribe các topic:', err.message);
+        else logger.info('Đã subscribe thành công các topic:', subs);
+      });
+      if (onConnectCallback) onConnectCallback();
     });
 
     client.on('message', (topic, payload) => {
-      const valueStr = payload.toString().trim();
-      onMessageCallback(topic, valueStr);
+      try {
+        const val = payload.toString().trim();
+        onMessageCallback(topic, val);
+      } catch (err) { logger.error(`Lỗi xử lý MQTT message [${topic}]:`, err.message); }
     });
 
-    client.on('reconnect', () => {
-      logger.warn('Đang thử kết nối lại với MQTT Broker...');
-    });
-
-    client.on('offline', () => {
-      logger.error('Mất kết nối với MQTT Broker!');
-    });
-
-    client.on('error', (err) => {
-      logger.error('Lỗi kết nối MQTT:', err.message);
-    });
-
+    client.on('reconnect', () => logger.warn('Đang thử kết nối lại với MQTT Broker...'));
+    client.on('offline', () => logger.error('Mất kết nối với MQTT Broker!'));
+    client.on('error', (err) => logger.error('Lỗi kết nối MQTT:', err.message));
     return client;
   },
 
-  /**
-   * Phát tin nhắn lên topic MQTT
-   */
   publish(topic, payload, options = { qos: 1 }) {
-    if (!client || !client.connected) {
-      logger.error(`Không thể publish lên topic ${topic} do MQTT Client đang ngoại tuyến.`);
-      return;
-    }
-    client.publish(topic, payload.toString(), options, (err) => {
-      if (err) {
-        logger.error(`Lỗi khi publish lên ${topic}:`, err.message);
+    return new Promise((resolve) => {
+      if (!client?.connected) {
+        logger.error(`Không thể publish lên topic ${topic} (MQTT offline)`);
+        return resolve(false);
       }
+      const str = typeof payload === 'object' && payload !== null ? JSON.stringify(payload) : String(payload ?? '');
+      client.publish(topic, str, options, (err) => {
+        if (err) { logger.error(`Lỗi khi publish lên ${topic}:`, err.message); return resolve(false); }
+        resolve(true);
+      });
     });
   },
 
-  /**
-   * Đóng kết nối
-   */
   close() {
     if (client) {
       logger.info('Đang ngắt kết nối MQTT Client...');
-      client.end();
+      client.end(false, () => { client = null; });
     }
   },
 
-  /**
-   * Kiểm tra trạng thái kết nối MQTT
-   */
   isConnected() {
     return client ? client.connected : false;
   }

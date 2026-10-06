@@ -14,12 +14,12 @@ Hệ thống giám sát và điều khiển nhà thông minh theo thời gian th
                                                                                │ Realtime
                         ┌─────────────────────────────────────────────────────┘
                         ▼
-               ┌─────────────────┐
-               │ Frontend (Vercel│   Supabase JS SDK (Realtime WebSocket)
-               │  React + Vite)  │ ◄─────────────────────────────────────
-               └────────┬────────┘
-                        │ MQTT over WebSocket (direct, low-latency)
-                        └──────────────────────────────────► ESP32
+                ┌─────────────────┐
+                │    Frontend     │   Supabase JS SDK (Realtime WebSocket)
+                │  React + Vite   │ ◄─────────────────────────────────────
+                └────────┬────────┘
+                         │ MQTT over WebSocket (direct, low-latency)
+                         └──────────────────────────────────► ESP32
 ```
 
 ### Luồng dữ liệu
@@ -41,7 +41,7 @@ Hệ thống giám sát và điều khiển nhà thông minh theo thời gian th
 | **Backend Bridge** | Node.js 22, `mqtt` npm, `@supabase/supabase-js` |
 | **Database** | Supabase (PostgreSQL) + Realtime WebSocket |
 | **Frontend** | React 19, TypeScript, TanStack Router, Vite, Recharts |
-| **Deploy** | Backend → Render, Frontend → Vercel |
+| **Chạy ứng dụng** | Backend → Render, Frontend → Local Dev Server (Vite) |
 
 ---
 
@@ -51,7 +51,6 @@ Hệ thống giám sát và điều khiển nhà thông minh theo thời gian th
 - **npm** ≥ 10.x
 - Tài khoản [Supabase](https://supabase.com) (free tier OK)
 - Tài khoản [Render](https://render.com) (để deploy backend)
-- Tài khoản [Vercel](https://vercel.com) (để deploy frontend)
 - Arduino IDE với board ESP32 đã cài đặt
 
 ---
@@ -224,16 +223,18 @@ node scripts/simulator.js
    - `SUPABASE_SERVICE_ROLE_KEY` = `sb_secret_...`
    - `RENDER_EXTERNAL_URL` = `https://YOUR_SERVICE.onrender.com` *(để self-ping chống spin-down)*
 
-### Frontend lên Vercel
+### Frontend (Chạy cục bộ)
 
 ```bash
 cd frontend
-npx vercel --prod
+npm install
+npm run dev
 ```
 
-Hoặc kết nối GitHub repo trên Vercel Dashboard. Thêm Environment Variables:
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
+Truy cập giao diện tại: `http://localhost:3000` (hoặc port do Vite cấp).
+Tạo file `.env.local` trong thư mục `frontend`:
+- `VITE_SUPABASE_URL` = `https://YOUR_PROJECT.supabase.co`
+- `VITE_SUPABASE_ANON_KEY` = `YOUR_ANON_KEY`
 
 ---
 
@@ -299,7 +300,8 @@ Response mẫu:
 |-------|-------|
 | Email | `buivanchung22109@gmail.com` |
 | Password | `Admin@123` |
-| Vercel URL | https://io-t-theta-olive.vercel.app |
+| Local Frontend URL | `http://localhost:3000` |
+
 
 ---
 

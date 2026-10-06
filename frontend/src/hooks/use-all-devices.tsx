@@ -10,9 +10,9 @@ interface AllDevicesContextValue {
   updateDeviceName: (
     deviceId: number,
     newName: string,
-    oldName: string,
-    currentUserId: number | null,
-    currentNodeId: string | null
+    oldName?: string,
+    currentUserId?: number | null,
+    currentNodeId?: string | null
   ) => Promise<boolean>;
 }
 
@@ -23,13 +23,7 @@ const AllDevicesContext = createContext<AllDevicesContextValue>({
   updateDeviceName: async () => false,
 });
 
-export function useAllDevices() {
-  const context = useContext(AllDevicesContext);
-  if (!context) {
-    throw new Error("useAllDevices must be used within an AllDevicesProvider");
-  }
-  return context;
-}
+export const useAllDevices = () => useContext(AllDevicesContext);
 
 export function AllDevicesProvider({
   children,
@@ -41,6 +35,7 @@ export function AllDevicesProvider({
   const [devices, setDevices] = useState<DeviceData[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Tải danh sách thiết bị (Supabase RLS tự động phân quyền theo người dùng)
   const refreshDevices = useCallback(async () => {
     if (!currentUser) {
       setDevices([]);
@@ -49,62 +44,9 @@ export function AllDevicesProvider({
     }
     setLoading(true);
     try {
-      // Admin: lấy tất cả thiết bị
-      if (currentUser.vaitro === "admin") {
-        const { data, error } = await supabase
-          .from("thietbi")
-          .select("*")
-          .order("id_thietbi");
-        if (!error && data) setDevices(data as DeviceData[]);
-        return;
-      }
-
-      if (!currentUser.idnguoidung) {
-        setDevices([]);
-        return;
-      }
-
-      const userId = Number(currentUser.idnguoidung);
-
-      // Kiểm tra xem user có thuộc household nào không
-      const { data: membershipData } = await supabase
-        .from("thanhvien_hogiadinh")
-        .select("id_hogiadinh")
-        .eq("idnguoidung", userId)
-        .maybeSingle();
-
-      let nodeIds: string[] = [];
-
-      if (membershipData?.id_hogiadinh) {
-        // Lấy tất cả node của household (member thấy toàn bộ node)
-        const { data: nodes } = await supabase
-          .from("esp32_nodes")
-          .select("idnode")
-          .eq("id_hogiadinh", membershipData.id_hogiadinh)
-          .eq("trang_thai_duyet", "approved")
-          .neq("idnode", "SYSTEM_CONFIG");
-
-        if (nodes) nodeIds = nodes.map((n) => n.idnode);
-      } else {
-        // Không có household: chỉ lấy node của chính mình
-        const { data: nodes } = await supabase
-          .from("esp32_nodes")
-          .select("idnode")
-          .eq("idnguoidung", userId)
-          .eq("trang_thai_duyet", "approved");
-
-        if (nodes) nodeIds = nodes.map((n) => n.idnode);
-      }
-
-      if (nodeIds.length === 0) {
-        setDevices([]);
-        return;
-      }
-
       const { data, error } = await supabase
         .from("thietbi")
         .select("*")
-        .in("idnode", nodeIds)
         .order("id_thietbi");
 
       if (!error && data) {
@@ -121,10 +63,9 @@ export function AllDevicesProvider({
     refreshDevices();
   }, [refreshDevices]);
 
-  // Realtime subscription for thietbi changes
+  // Đồng bộ realtime bảng thietbi
   useEffect(() => {
     if (!currentUser) return;
-
     const channel = supabase
       .channel("global-thietbi-changes")
       .on(
@@ -159,22 +100,21 @@ export function AllDevicesProvider({
   const updateDeviceName = async (
     deviceId: number,
     newName: string,
-    oldName: string,
-    currentUserId: number | null,
-    currentNodeId: string | null
+    oldName?: string,
+    currentUserId?: number | null,
+    currentNodeId?: string | null
   ) => {
-    try {
-      const cleanName = newName.trim();
-      if (!cleanName) {
-        toast.error("Tên thiết bị không được để trống!");
-        return false;
-      }
-      if (cleanName.length > 50) {
-        toast.error("Tên thiết bị không được quá 50 ký tự!");
-        return false;
-      }
+    const cleanName = newName.trim();
+    if (!cleanName) {
+      toast.error("Tên thiết bị không được để trống!");
+      return false;
+    }
+    if (cleanName.length > 50) {
+      toast.error("Tên thiết bị không được quá 50 ký tự!");
+      return false;
+    }
 
-      // 1. Update the display name in DB
+    try {
       const { error } = await supabase
         .from("thietbi")
         .update({ ten_hienthi: cleanName })
@@ -182,23 +122,23 @@ export function AllDevicesProvider({
 
       if (error) throw error;
 
-      // 2. Ghi 1 dòng vào Activity History (nhatkyhoatdong)
-      const device = devices.find(d => d.id_thietbi === deviceId);
-      const logNodeId = currentNodeId || device?.idnode || null;
+      const device = devices.find((d) => d.id_thietbi === deviceId);
+      const prevName = oldName || device?.ten_hienthi || "Thiết bị";
+      const logNode = currentNodeId || device?.idnode || null;
+      const logUser = currentUserId ?? currentUser?.idnguoidung ?? null;
+
       await supabase.from("nhatkyhoatdong").insert([{
         id_thietbi: deviceId,
-        idnguoidung: currentUserId,
-        idnode: logNodeId,
-        loai_thongbao: 'user_action',
-        hanhdong: JSON.stringify({
+        idnguoidung: logUser,
+        idnode: logNode,
+        loai_thongbao: "user_action",
+        hanhdong: `Đổi tên thiết bị "${prevName}" thành "${cleanName}"`,
+        chi_tiet: JSON.stringify({
           loai_nhatky: "user_action",
-          loai_thao_tac: "config_change",
-          description: `Đổi tên thiết bị "${oldName}" thành "${cleanName}"`,
           device_id: deviceId,
-          device_name: cleanName,
-          node_id: logNodeId || "",
+          old_name: prevName,
+          new_name: cleanName,
           timestamp: new Date().toISOString(),
-          meta_detail: { old_value: oldName, new_value: cleanName },
         }),
       }]);
 
@@ -212,14 +152,7 @@ export function AllDevicesProvider({
   };
 
   return (
-    <AllDevicesContext.Provider
-      value={{
-        devices,
-        loading,
-        refreshDevices,
-        updateDeviceName,
-      }}
-    >
+    <AllDevicesContext.Provider value={{ devices, loading, refreshDevices, updateDeviceName }}>
       {children}
     </AllDevicesContext.Provider>
   );

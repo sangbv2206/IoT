@@ -1,7 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useCustomTime } from "./use-custom-time.tsx";
 
-/* ---------- time hooks ---------- */
+/* ---------- Singleton Shared 15s Timer for Relative Time ---------- */
+let shared15sNow = Date.now();
+const listeners15s = new Set<() => void>();
+let shared15sTimer: ReturnType<typeof setInterval> | null = null;
+
+function subscribe15s(cb: () => void) {
+  listeners15s.add(cb);
+  if (!shared15sTimer) {
+    shared15sTimer = setInterval(() => {
+      shared15sNow = Date.now();
+      listeners15s.forEach((fn) => fn());
+    }, 15000);
+  }
+  return () => {
+    listeners15s.delete(cb);
+    if (listeners15s.size === 0 && shared15sTimer) {
+      clearInterval(shared15sTimer);
+      shared15sTimer = null;
+    }
+  };
+}
+
+/* ---------- Time Hooks ---------- */
 
 export function useNow(intervalMs = 1000) {
   const [now, setNow] = useState(() => Date.now());
@@ -11,9 +33,14 @@ export function useNow(intervalMs = 1000) {
   }, [intervalMs]);
   return now;
 }
-
 export function useRelativeTime(timestamp: number) {
-  const now = useNow(15_000);
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    return subscribe15s(() => setTick((t) => t + 1));
+  }, []);
+
+  const now = shared15sNow;
   const diff = Math.max(0, Math.floor((now - timestamp) / 1000));
   if (diff < 10) return "vừa xong";
   if (diff < 60) return `${diff} giây trước`;
@@ -27,155 +54,107 @@ export function useRelativeTime(timestamp: number) {
 
 export type TimeOfDay = "dawn" | "morning" | "noon" | "afternoon" | "evening" | "night";
 
-/**
- * Lấy giờ hiện tại theo múi giờ Việt Nam (Asia/Ho_Chi_Minh / UTC+7).
- * Dùng Intl.DateTimeFormat để ép về đúng giờ VN bất kể timezone của trình duyệt/server.
- */
 export function getTimeOfDayVN(date?: Date): number {
-  const targetDate = date || new Date();
-  const getFallbackVNTime = () => {
-    const utc = targetDate.getTime() + (targetDate.getTimezoneOffset() * 60000);
-    return new Date(utc + (3600000 * 7)); // UTC+7
-  };
-
+  const now = date || new Date();
   try {
-    const formatter = new Intl.DateTimeFormat("en-US", {
+    const vnDateStr = new Intl.DateTimeFormat("en-US", {
       timeZone: "Asia/Ho_Chi_Minh",
       hour: "numeric",
       hour12: false,
-    });
-    const hourStr = formatter.format(targetDate);
-    const h = parseInt(hourStr, 10);
-    // Intl trả về 0–23; giờ 24 (midnight) normalize về 0
-    return isNaN(h) ? getFallbackVNTime().getHours() : h % 24;
+    }).format(now);
+    const h = parseInt(vnDateStr, 10);
+    return isNaN(h) ? now.getHours() : h % 24;
   } catch {
-    // Fallback nếu Intl không hỗ trợ timezone cụ thể
-    return getFallbackVNTime().getHours();
+    const utcTime = now.getTime() + now.getTimezoneOffset() * 60000;
+    return new Date(utcTime + 7 * 3600000).getHours();
   }
 }
 
-export function useTimeOfDay(customDate?: Date): { period: TimeOfDay; gradient: string; darkGradient: string; label: string; hour: number } {
+export function useTimeOfDay(customDate?: Date) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  const { currentTime } = useCustomTime();
-  
-  const effectiveDate = customDate || currentTime;
-  const h = mounted ? getTimeOfDayVN(effectiveDate) : 10; // deterministic default for SSR
+  const { offsetMs } = useCustomTime();
 
-  // Rich, distinct dark mode gradients for each time of day
-  const darkDawn =
-    "radial-gradient(1200px 600px at -10% -10%,#451a03 0%,transparent 60%),radial-gradient(900px 500px at 110% 10%,#31103f 0%,transparent 55%),linear-gradient(180deg,#0f172a 0%,#1e1b4b 100%)";
-  
-  const darkNoon =
-    "radial-gradient(1200px 600px at -10% -10%,#1e3a8a 0%,transparent 60%),radial-gradient(900px 500px at 110% 10%,#0f766e 0%,transparent 55%),linear-gradient(180deg,#0f172a 0%,#172554 100%)";
+  const getHour = useCallback(() => {
+    if (!mounted) return 10;
+    const effectiveDate = customDate || new Date(Date.now() + offsetMs);
+    return getTimeOfDayVN(effectiveDate);
+  }, [mounted, customDate, offsetMs]);
 
-  const darkAfternoon =
-    "radial-gradient(1200px 600px at -10% -10%,#78350f 0%,transparent 60%),radial-gradient(900px 500px at 110% 10%,#581c87 0%,transparent 55%),linear-gradient(180deg,#1c1917 0%,#2e1065 100%)";
+  const [h, setH] = useState(getHour);
 
-  const darkEvening =
-    "radial-gradient(1200px 600px at -10% -10%,#701a75 0%,transparent 60%),radial-gradient(900px 500px at 110% 10%,#312e81 0%,transparent 55%),linear-gradient(180deg,#1e1b4b 0%,#3b0764 100%)";
+  useEffect(() => {
+    setH(getHour());
+    const timer = setInterval(() => {
+      const nextH = getHour();
+      setH((prev) => (prev !== nextH ? nextH : prev));
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [getHour]);
 
-  const darkNight =
-    "radial-gradient(1200px 600px at -10% -10%,#1e293b 0%,transparent 60%),radial-gradient(900px 500px at 110% 10%,#312e81 0%,transparent 55%),linear-gradient(180deg,#0b1020 0%,#1a1836 100%)";
-
-  // 05:00–09:59 → Sáng sớm
-  if (h >= 5 && h < 10)
-    return {
-      period: "dawn",
-      label: "Sáng sớm",
-      hour: h,
-      darkGradient: darkDawn,
-      gradient:
-        "radial-gradient(1200px 600px at -10% -10%,#ffe4c4 0%,transparent 60%),radial-gradient(900px 500px at 110% 10%,#ffd6e0 0%,transparent 55%),linear-gradient(180deg,#fff5eb 0%,#ffe9d6 100%)",
-    };
-  // 10:00–12:59 → Buổi trưa
-  if (h >= 10 && h < 13)
-    return {
-      period: "noon",
-      label: "Buổi trưa",
-      hour: h,
-      darkGradient: darkNoon,
-      gradient:
-        "radial-gradient(1200px 600px at -10% -10%,#dbe7ff 0%,transparent 60%),radial-gradient(900px 500px at 110% 10%,#e0f7ff 0%,transparent 55%),linear-gradient(180deg,#f6f9ff 0%,#eaf2fb 100%)",
-    };
-  // 13:00–18:59 → Buổi chiều
-  if (h >= 13 && h < 19)
-    return {
-      period: "afternoon",
-      label: "Buổi chiều",
-      hour: h,
-      darkGradient: darkAfternoon,
-      gradient:
-        "radial-gradient(1200px 600px at -10% -10%,#fff2c4 0%,transparent 60%),radial-gradient(900px 500px at 110% 10%,#ffe4b0 0%,transparent 55%),linear-gradient(180deg,#fffaf0 0%,#fff3e0 100%)",
-    };
-  // 19:00–21:59 → Buổi tối
-  if (h >= 19 && h < 22)
-    return {
-      period: "evening",
-      label: "Buổi tối",
-      hour: h,
-      darkGradient: darkEvening,
-      gradient:
-        "radial-gradient(1200px 600px at -10% -10%,#581c87 0%,transparent 60%),radial-gradient(900px 500px at 110% 10%,#831843 0%,transparent 55%),linear-gradient(180deg,#2e1065 0%,#3b0764 100%)",
-    };
-  // 22:00–04:59 → Đêm khuya
-  return {
-    period: "night",
-    label: "Đêm khuya",
-    hour: h,
-    darkGradient:
-      "radial-gradient(1200px 600px at -10% -10%,#020617 0%,transparent 60%),radial-gradient(900px 500px at 110% 10%,#1e1b4b 0%,transparent 55%),linear-gradient(180deg,#020617 0%,#0f172a 100%)",
-    gradient:
-      "radial-gradient(1200px 600px at -10% -10%,#1e1b4b 0%,transparent 60%),radial-gradient(900px 500px at 110% 10%,#1e293b 0%,transparent 55%),linear-gradient(180deg,#0b1020 0%,#1a1836 100%)",
-  };
+  return useMemo(() => {
+    if (h >= 5 && h < 7) return { period: "dawn" as TimeOfDay, label: "Sáng sớm", hour: h };
+    if (h >= 7 && h < 11) return { period: "morning" as TimeOfDay, label: "Buổi sáng", hour: h };
+    if (h >= 11 && h < 14) return { period: "noon" as TimeOfDay, label: "Buổi trưa", hour: h };
+    if (h >= 14 && h < 18) return { period: "afternoon" as TimeOfDay, label: "Buổi chiều", hour: h };
+    if (h >= 18 && h < 22) return { period: "evening" as TimeOfDay, label: "Buổi tối", hour: h };
+    return { period: "night" as TimeOfDay, label: "Đêm khuya", hour: h };
+  }, [h]);
 }
 
 export function useDarkMode() {
-  const [dark, setDark] = useState(false);
-  useEffect(() => {
-    const stored = typeof window !== "undefined" ? window.localStorage.getItem("sh-theme") : null;
-    let init = false;
-    if (stored) {
-      init = stored === "dark";
-    } else {
-      const h = getTimeOfDayVN();
-      init = h >= 19 || h < 5;
-    }
-    setDark(init);
-    document.documentElement.classList.toggle("dark", init);
-  }, []);
-  const toggle = () => {
-    setDark((d) => {
-      const nd = !d;
-      document.documentElement.classList.toggle("dark", nd);
-      try { window.localStorage.setItem("sh-theme", nd ? "dark" : "light"); } catch {}
-      return nd;
-    });
-  };
-  return { dark, toggle };
+  return { dark: false, toggle: () => {} };
 }
 
-/* ---------- animated number ---------- */
-
-export function useAnimatedNumber(target: number | null, duration = 700) {
+export function useAnimatedNumber(target: number | null, duration = 350) {
   const [value, setValue] = useState(target ?? 0);
-  const rafRef = useRef(0);
+  const currentValRef = useRef(target ?? 0);
+  const rafRef = useRef<number | null>(null);
+
   useEffect(() => {
-    if (target == null) { setValue(0); return; }
-    const from = value;
+    if (target == null) {
+      currentValRef.current = 0;
+      setValue(0);
+      return;
+    }
+
+    const from = currentValRef.current;
     const to = target;
-    if (from === to) return;
-    let start: number | null = null;
+    
+    if (Math.abs(to - from) < 0.05) {
+      currentValRef.current = to;
+      setValue(to);
+      return;
+    }
+
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+    }
+
+    let startTime: number | null = null;
     const step = (t: number) => {
-      if (start === null) start = t;
-      const p = Math.min(1, (t - start) / duration);
-      const eased = 1 - Math.pow(1 - p, 3);
-      setValue(from + (to - from) * eased);
-      if (p < 1) rafRef.current = requestAnimationFrame(step);
+      if (startTime === null) startTime = t;
+      const progress = Math.min(1, (t - startTime) / Math.max(1, duration));
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const nextVal = from + (to - from) * eased;
+
+      currentValRef.current = nextVal;
+      setValue(nextVal);
+
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(step);
+      } else {
+        currentValRef.current = to;
+        setValue(to);
+      }
     };
+
     rafRef.current = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(rafRef.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
   }, [target, duration]);
+
   return value;
 }

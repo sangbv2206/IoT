@@ -52,3 +52,17 @@ uml_diagrams.md
 .vercel/
 **/ .vercel/
 scratch/
+.pio/
+include/secrets.h
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+
+
+# PlatformIO / Clangd build cache
+.pio/build/
+.cache/
+compile_commands.json

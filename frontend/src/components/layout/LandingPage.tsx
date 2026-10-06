@@ -2,8 +2,6 @@ import { cn } from "@/lib/utils";
 import { Link } from "@tanstack/react-router";
 import {
   Cpu,
-  Sun,
-  Moon,
   ArrowRight,
   Thermometer,
   Clock,
@@ -11,17 +9,12 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export function LandingPage({ dark, toggleDark }: { dark: boolean; toggleDark: () => void }) {
-  const bg = dark
-    ? "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)"
-    : "linear-gradient(135deg, #f6f7fb 0%, #eef1f8 100%)";
+export function LandingPage({ dark = false, toggleDark: _toggleDark }: { dark?: boolean; toggleDark?: () => void } = {}) {
+  const bg = "linear-gradient(135deg, #f6f7fb 0%, #eef1f8 100%)";
 
   return (
     <div
-      className={cn(
-        "min-h-screen transition-colors duration-1000 flex flex-col justify-between p-6 md:p-10",
-        dark ? "text-slate-100 bg-slate-950" : "text-slate-800 bg-slate-50"
-      )}
+      className="min-h-screen flex flex-col justify-between p-6 md:p-10 text-slate-800 bg-slate-50"
       style={{ background: bg }}
     >
       {/* Header */}
@@ -32,17 +25,6 @@ export function LandingPage({ dark, toggleDark }: { dark: boolean; toggleDark: (
           </div>
           <span className="font-bold text-lg tracking-tight">Smart Home IoT</span>
         </div>
-        <button
-          onClick={toggleDark}
-          className={cn(
-            "grid h-10 w-10 place-items-center rounded-xl border shadow-sm transition cursor-pointer",
-            dark
-              ? "border-white/10 bg-white/5 text-amber-300 hover:bg-white/10"
-              : "border-white/70 bg-white/80 text-slate-600 hover:bg-white hover:text-slate-900"
-          )}
-        >
-          {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </button>
       </header>
 
       {/* Main Hero Section */}
@@ -82,7 +64,7 @@ export function LandingPage({ dark, toggleDark }: { dark: boolean; toggleDark: (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {[
             { title: "Giám sát Cảm biến", desc: "Đọc nhiệt độ, độ ẩm và cường độ ánh sáng thời gian thực.", icon: Thermometer, color: "text-rose-500 bg-rose-500/10" },
-            { title: "Điều khiển Thiết bị", desc: "Bật/tắt Điều hòa, Quạt, Đèn ở 2 chế độ Tự động và Thủ công.", icon: Cpu, color: "text-indigo-500 bg-indigo-500/10" },
+            { title: "Điều khiển Thiết bị", desc: "Bật/tắt Quạt, Đèn, Rèm cửa ở 2 chế độ Tự động và Thủ công.", icon: Cpu, color: "text-indigo-500 bg-indigo-500/10" },
             { title: "Lịch trình Hẹn giờ", desc: "Cài đặt lịch bật/tắt thiết bị tự động theo giờ trong ngày.", icon: Clock, color: "text-emerald-500 bg-emerald-500/10" },
             { title: "Cảnh báo & Nhật ký", desc: "Ghi chép lịch sử vận hành, báo động ngay lập tức khi vượt ngưỡng.", icon: ShieldAlert, color: "text-amber-500 bg-amber-500/10" }
           ].map((f, i) => {

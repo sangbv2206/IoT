@@ -36,13 +36,22 @@ function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
+
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const loginPromise = supabase.auth.signInWithPassword({
         email,
         password,
       });
-      if (error) throw error;
+
+      const timeoutPromise = new Promise<{ data: any; error: any }>((_, reject) =>
+        setTimeout(() => reject(new Error("Kết nối quá thời gian. Vui lòng kiểm tra mạng 3G/4G/Wifi.")), 10000)
+      );
+
+      const res = await Promise.race([loginPromise, timeoutPromise]) as any;
+      if (res && res.error) throw res.error;
+
       toast.success("Đăng nhập thành công!");
       navigate({ to: "/" });
     } catch (err: any) {
@@ -61,7 +70,7 @@ function LoginPage() {
         <ArrowLeft className="h-4 w-4" /> Về Bảng điều khiển
       </Link>
 
-      <div className="w-full max-w-md rounded-3xl border border-white/70 bg-white/70 p-8 shadow-[0_10px_40px_-20px_rgba(30,41,59,0.25)] backdrop-blur-xl">
+      <div className="w-full max-w-md rounded-3xl border border-slate-200/80 bg-white/95 p-6 sm:p-8 shadow-xl">
         <div className="flex flex-col items-center mb-6">
           <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 to-sky-400 text-white shadow-lg shadow-indigo-500/30 mb-3">
             <Cpu className="h-6 w-6" />

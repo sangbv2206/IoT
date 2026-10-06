@@ -1,11 +1,11 @@
 {
-  "name": "dang-iot-backend",
-  "version": "1.0.0",
-  "description": "MQTT to Supabase bridge for IoT Dashboard",
+  "name": "iot-backend",
+  "version": "2.0.0",
+  "description": "IoT Home - Bui Van Sang",
   "main": "bridge.js",
   "scripts": {
-    "start": "node bridge.js",
-    "dev": "nodemon bridge.js"
+    "start": "node -r dotenv/config bridge.js",
+    "dev": "nodemon -r dotenv/config bridge.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.8",
@@ -13,7 +13,6 @@
     "mqtt": "^5.5.0"
   },
   "devDependencies": {
-    "docx": "^9.7.1",
     "nodemon": "^3.1.0",
     "pg": "^8.22.0"
   }

@@ -60,19 +60,22 @@ export function CustomTimeProvider({ children }: { children: React.ReactNode }):
   }, []);
 
   const isCustom = Math.abs(offsetMs) > 1000;
-  const currentTime = new Date(now + offsetMs);
+  const currentTime = React.useMemo(() => new Date(now + offsetMs), [now, offsetMs]);
+
+  const value = React.useMemo(
+    () => ({
+      currentTime,
+      offsetMs,
+      isCustom,
+      setCustomTime,
+      addOffset,
+      resetToRealTime,
+    }),
+    [currentTime, offsetMs, isCustom, setCustomTime, addOffset, resetToRealTime]
+  );
 
   return (
-    <CustomTimeContext.Provider
-      value={{
-        currentTime,
-        offsetMs,
-        isCustom,
-        setCustomTime,
-        addOffset,
-        resetToRealTime,
-      }}
-    >
+    <CustomTimeContext.Provider value={value}>
       {children}
     </CustomTimeContext.Provider>
   );

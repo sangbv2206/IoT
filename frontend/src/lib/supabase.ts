@@ -18,11 +18,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 });
 
-// ============================================================
-// Auto-reconnect Realtime khi user quay lại tab sau thời gian idle
-// Giải quyết vấn đề: Render spin-down → Supabase Realtime WebSocket timeout
-// → user quay lại tab → channels ở trạng thái chết nhưng không tự kết nối lại
-// ============================================================
+
 let lastHiddenAt: number | null = null;
 const RECONNECT_THRESHOLD_MS = 5 * 60 * 1000; // Nếu tab bị ẩn > 5 phút thì reconnect
 
