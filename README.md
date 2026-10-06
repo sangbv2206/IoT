@@ -1,310 +1,252 @@
-# 🏠 Smart Home IoT Dashboard
+# 🏠 Smart Home IoT & Edge AI Dashboard
 
-Hệ thống giám sát và điều khiển nhà thông minh theo thời gian thực sử dụng ESP32, MQTT, Supabase và React.
+> Hệ thống giám sát, điều khiển nhà thông minh và xử lý giọng nói tích hợp **Edge AI (TinyML)** & **Cloud LLM (Gemini + Groq Whisper)** dựa trên nền tảng **ESP32-S3**, **MQTT**, **Supabase (PostgreSQL)** và **React 19**.
 
 ---
 
-## 📐 Kiến trúc hệ thống
+## 📐 Kiến trúc tổng thể hệ thống
 
 ```
-┌─────────────┐   MQTT (sensor data)   ┌──────────────────┐   Insert   ┌─────────────┐
-│   ESP32-S3  │ ─────────────────────► │  Backend Bridge  │ ─────────► │  Supabase   │
-│ (Cảm biến)  │ ◄───────────────────── │  (bridge.js)     │            │  PostgreSQL │
-└─────────────┘   MQTT (control cmd)   └──────────────────┘            └──────┬──────┘
-                                                                               │ Realtime
-                        ┌─────────────────────────────────────────────────────┘
-                        ▼
-                ┌─────────────────┐
-                │    Frontend     │   Supabase JS SDK (Realtime WebSocket)
-                │  React + Vite   │ ◄─────────────────────────────────────
-                └────────┬────────┘
-                         │ MQTT over WebSocket (direct, low-latency)
-                         └──────────────────────────────────► ESP32
+                                  ┌───────────────────────────────┐
+                                  │      Cloud Services           │
+                                  │  • Supabase (PostgreSQL + RT) │
+                                  │  • HiveMQ Public Broker       │
+                                  │  • Groq Whisper (STT ~200ms)  │
+                                  │  • Google Gemini AI (LLM NLP) │
+                                  └───────────────▲───────────────┘
+                                                  │
+                  ┌───────────────────────────────┴───────────────────────────────┐
+                  ▼                                                               ▼
+        ┌──────────────────┐                                            ┌──────────────────┐
+        │  Backend Server  │                                            │  Frontend Client │
+        │  • Node.js 22    │                                            │  • React 19      │
+        │    (Bridge MQTT) │ ◄────────────────── MQTT ────────────────► │  • Vite + TS     │
+        │  • FastAPI Python│             (Direct over WS)               │  • TanStack Route│
+        │    (Voice AI)    │                                            │  • Tailwind/CSS  │
+        └────────▲─────────┘                                            └──────────────────┘
+                 │
+                 │ WiFi / MQTT (buivansang_iot_pj/*)
+                 ▼
+        ┌────────────────────────────────────────────────────────┐
+        │                     ESP32-S3 DevKit                    │
+        │  • TinyML Edge Impulse (Keyword Spotting Offline)       │
+        │  • I2S Microphone Audio DSP & VAD Pipeline             │
+        │  • Hardware Controllers (PWM, I2C, IR Remote, Servo)   │
+        └───────────────────────────▲────────────────────────────┘
+                                    │
+           ┌────────────────────────┴────────────────────────┐
+           ▼                                                 ▼
+    [Sensors & Input]                                [Actuators & Output]
+    • DHT11 (Temp & Humidity)                         • Đèn Chiếu Sáng (LED PWM)
+    • BH1750 (Lux Light I2C)                          • Quạt Thông Gió (Fan PWM)
+    • I2S Mic (INMP441)                               • Rèm Cửa Tự Động (Servo)
+    • Mắt thu hồng ngoại (IR Rx)                      • Điều Khiển Smart TV (IR Tx LED)
+    • Nút nhấn Boot                                   • Màn hình hiển thị OLED SSD1306
+                                                      • Đèn trạng thái RGB NeoPixel
 ```
 
-### Luồng dữ liệu
+---
 
-| Chiều | Đường đi | Độ trễ |
-|-------|----------|--------|
-| Cảm biến → Web | ESP32 → MQTT → Backend → Supabase → Frontend Realtime | ~500ms |
-| Web → Thiết bị | Frontend → **MQTT WebSocket trực tiếp** → ESP32 | ~150-200ms |
-| Web → DB | Frontend → Supabase REST API | ~100ms |
+## 🛠 Công nghệ sử dụng (Tech Stack)
+
+| Phân hệ | Công nghệ | Chi tiết |
+|---------|-----------|----------|
+| **Phần cứng & Firmware** | ESP32-S3 DevKitC-1, PlatformIO, C++ | 8MB Flash, OPI PSRAM, FreeRTOS, TinyML Edge Impulse |
+| **Giao thức IoT** | MQTT 3.1.1 (HiveMQ Public Broker) | Hỗ trợ QoS 0/1, Retain flag, Topic Prefix: `buivansang_iot_pj` |
+| **Xử lý âm thanh & AI** | I2S INMP441, DSP, Groq Whisper, Gemini | Nhận diện giọng nói tiếng Việt độ trễ cực thấp, phân tích ngữ nghĩa lệnh |
+| **Backend Services** | Node.js (v22), Express, Python FastAPI | Xử lý nghiệp vụ Bridge, Rule engine, Lịch hẹn giờ, Scene service |
+| **Cơ sở dữ liệu** | Supabase (PostgreSQL 15) | Realtime WebSockets, Lưu trữ Telemetry, RPC tối ưu hóa biểu đồ |
+| **Frontend Web** | React 19, TypeScript, TanStack Router | Giao diện Dark/Light mode, Recharts, TanStack Query, Radix UI |
 
 ---
 
-## 🛠 Tech Stack
+## 🔌 Sơ đồ chân kết nối phần cứng (ESP32-S3 Pinout)
 
-| Lớp | Công nghệ |
-|-----|-----------|
-| **Phần cứng** | ESP32-S3, DHT11 (nhiệt độ & độ ẩm), BH1750 (ánh sáng) |
-| **Giao thức IoT** | MQTT 3.1.1 qua HiveMQ Public Broker |
-| **Backend Bridge** | Node.js 22, `mqtt` npm, `@supabase/supabase-js` |
-| **Database** | Supabase (PostgreSQL) + Realtime WebSocket |
-| **Frontend** | React 19, TypeScript, TanStack Router, Vite, Recharts |
-| **Chạy ứng dụng** | Backend → Render, Frontend → Local Dev Server (Vite) |
-
----
-
-## 📋 Prerequisites
-
-- **Node.js** ≥ 20.x
-- **npm** ≥ 10.x
-- Tài khoản [Supabase](https://supabase.com) (free tier OK)
-- Tài khoản [Render](https://render.com) (để deploy backend)
-- Arduino IDE với board ESP32 đã cài đặt
+| Linh kiện | Chân ESP32-S3 | Chế độ / Chức năng | Ghi chú |
+|-----------|---------------|-------------------|---------|
+| **OLED SSD1306 / BH1750** | `GPIO 8` | I2C SDA | Giao tiếp I2C chung |
+| **OLED SSD1306 / BH1750** | `GPIO 9` | I2C SCL | Tần số 400kHz |
+| **DHT11** | `GPIO 10` | 1-Wire Digital In | Đo nhiệt độ & độ ẩm |
+| **Đèn LED chiếu sáng** | `GPIO 4` | LEDC PWM (CH 4) | Điều khiển độ sáng / Bật tắt |
+| **Quạt gió** | `GPIO 6` | LEDC PWM (CH 5) | Điều khiển tốc độ quạt |
+| **Rèm cửa** | `GPIO 7` | Servo PWM | Mở góc 0° - 180° |
+| **Mắt phát IR TV** | `GPIO 5` | IR Transmit (PWM) | Phát mã hồng ngoại điều khiển TV |
+| **Mắt thu IR** | `GPIO 3` | IR Receive | Học mã điều khiển |
+| **I2S Mic INMP441 (SCK)** | `GPIO 41` | I2S Bit Clock (BCLK) | Thu âm giọng nói 16kHz |
+| **I2S Mic INMP441 (WS)** | `GPIO 42` | I2S Word Select (LRCLK) | Kênh Mono/Stereo |
+| **I2S Mic INMP441 (SD)** | `GPIO 40` | I2S Serial Data (DIN) | Luồng mẫu âm thanh PCM |
+| **LED RGB Onboard** | `GPIO 48` | NeoPixel / RGB Output | Báo trạng thái kết nối & Voice AI |
+| **Nút nhấn Boot** | `GPIO 0` | Input Pullup | Kích hoạt thu âm thủ công |
 
 ---
 
-## 📁 Cấu trúc thư mục
+## 📁 Cấu trúc thư mục dự án
 
 ```
 IoT-PJ1/
-├── arduino/
-│   ├── esp32.ino          # Code firmware ESP32
-│   └── secrets.h          # WiFi credentials (KHÔNG commit lên git)
-├── backend/
-│   ├── bridge.js          # MQTT ↔ Supabase bridge (entry point)
-│   ├── config/
-│   │   └── config.js      # Cấu hình chung (topics, limits)
+├── platformio.ini             # Cấu hình PlatformIO cho ESP32-S3 DevKit
+├── include/
+│   └── secrets.h              # Cấu hình Wi-Fi SSID, Pass, API Keys (Không commit)
+├── src/                       # Mã nguồn Firmware ESP32-S3 (C++)
+│   ├── main.cpp               # Vòng lặp chính, kết nối WiFi/MQTT, FreeRTOS tasks
+│   ├── AppConfig.h            # Khai báo cấu hình chân GPIO, tham số DSP, Topics
+│   ├── hardware.cpp           # Điều khiển cảm biến, PWM LED/Quạt, Servo rèm
+│   ├── AudioDsp.cpp / .h      # Bộ lọc âm thanh, bộ phát hiện giọng nói VAD
+│   ├── DisplayUI.cpp / .h     # Giao diện hiển thị trạng thái lên màn hình OLED
+│   ├── tv_ir.cpp              # Điều khiển TV hồng ngoại (Power, Volume, Channel)
+│   └── audio_voice.cpp        # Pipeline xử lý Voice AI nội bộ
+├── lib/
+│   └── IoT_inferencing/       # Thư viện mô hình TinyML Edge Impulse
+├── backend/                   # Backend Node.js & Voice AI
+│   ├── bridge.js              # Entrypoint hệ thống Bridge MQTT ↔ Supabase
+│   ├── config/config.js       # Cấu hình Topics, Port và tham số hệ thống
 │   ├── services/
-│   │   ├── mqttService.js       # Kết nối & publish/subscribe MQTT
-│   │   ├── supabaseService.js   # CRUD + Realtime Supabase
-│   │   ├── automationService.js # Đánh giá luật tự động hóa
-│   │   └── scheduleService.js   # Lịch hẹn giờ thiết bị
-│   ├── scripts/
-│   │   ├── simulator.js       # Giả lập ESP32 gửi dữ liệu MQTT
-│   │   ├── generate_docs.js   # Tạo tài liệu Word hướng dẫn test
-│   │   ├── query_samples.js   # Các câu truy vấn mẫu qua RPC
-│   │   ├── test_now.js        # Script test nhanh RPC lấy dữ liệu hôm nay
-│   │   └── test_rpc_7d.js     # Script test RPC 7 ngày / 30 ngày / heatmap
-│   ├── utils/
-│   │   └── logger.js      # Logger có màu sắc
-│   ├── .env               # Biến môi trường (KHÔNG commit lên git)
-│   └── package.json
-├── database/
-│   ├── schema.sql         # Schema database Supabase đầy đủ
-│   └── admin_migration.sql # Sql bổ sung bảng và phân quyền admin/buyer
-├── docs/
-│   ├── BaoCao_IoT_SmartHome.docx # Báo cáo môn học Smart Home
-│   ├── Huong_Dan_Van_Hanh_Admin.docx # Hướng dẫn vận hành hệ thống cho admin
-│   ├── Huong_Dan_Van_Hanh_Admin_V2.docx # Hướng dẫn vận hành V2
-│   ├── TEST_COMMANDS.docx # Hướng dẫn chạy test backend và frontend (tự sinh)
-│   ├── test.puml          # Sơ đồ thiết kế PlantUML
-│   └── uml_diagrams.md    # Tài liệu giải thích sơ đồ UML
-├── frontend/
+│   │   ├── mqttService.js     # Quản lý kết nối & điều phối MQTT
+│   │   ├── supabaseService.js # Tích hợp Supabase CRUD, Batching & Realtime
+│   │   ├── automationService.js # Bộ xử lý luật tự động hóa theo ngưỡng
+│   │   ├── scheduleService.js # Động cơ thực thi lịch hẹn giờ
+│   │   ├── sceneService.js    # Quản lý và kích hoạt ngữ cảnh đa thiết bị
+│   │   ├── voiceService.js    # Tích hợp dịch vụ giọng nói AI
+│   │   └── telemetryService.js# Thu thập dữ liệu cảm biến & cảnh báo
+│   ├── scripts/simulator.js   # Bộ giả lập thiết bị gửi dữ liệu ảo
+│   └── .env                   # Biến môi trường Backend
+├── frontend/                  # Web App React 19 + TypeScript
 │   ├── src/
 │   │   ├── routes/
-│   │   │   ├── index.tsx  # Dashboard chính
-│   │   │   ├── login.tsx  # Trang đăng nhập
-│   │   │   └── profile.tsx # Trang hồ sơ người dùng
+│   │   │   ├── index.tsx      # Dashboard trung tâm tích hợp Tabs
+│   │   │   ├── login.tsx      # Đăng nhập hệ thống
+│   │   │   ├── register.tsx   # Đăng ký tài khoản
+│   │   │   └── settings.tsx   # Cài đặt người dùng & đổi mật khẩu
+│   │   ├── components/dashboard/tabs/
+│   │   │   ├── overview/      # Giám sát thông số cảm biến 24h & thiết bị
+│   │   │   ├── devices/       # Điều khiển thiết bị & Remote TV thông minh
+│   │   │   ├── scenes/        # Quản lý & kích hoạt kịch bản ngữ cảnh
+│   │   │   ├── schedule/      # Cài đặt lịch trình tự động theo giờ
+│   │   │   └── analytics/     # Biểu đồ thống kê lịch sử chuyên sâu
 │   │   └── lib/
-│   │       ├── supabase.ts    # Supabase client + auto-reconnect
-│   │       └── mqttClient.ts  # MQTT WebSocket client (direct publish)
-│   ├── .env               # Biến môi trường frontend
+│   │       ├── supabase.ts    # Supabase Client kết nối Realtime
+│   │       └── mqttClient.ts  # MQTT Client trực tiếp trên Web Browser
+│   ├── .env                   # Biến môi trường Frontend (Vite)
 │   └── package.json
-└── README.md
+└── database/schema/           # Kịch bản cơ sở dữ liệu Supabase PostgreSQL
+    ├── 01_tables.sql          # Bảng dữ liệu chính
+    ├── 02_indexes.sql         # Đánh chỉ mục tối ưu truy vấn
+    ├── 03_rpc_functions.sql   # Hàm tổng hợp dữ liệu thống kê phân tích
+    ├── 04_rls_policies.sql    # Phân quyền Row-Level Security
+    └── 05_seed_data.sql       # Dữ liệu khởi tạo mẫu
 ```
 
 ---
 
-## ⚙️ Cài đặt & Chạy Local
+## 🚀 Hướng dẫn cài đặt & Khởi chạy
 
-### 1. Clone project
+### 1. Cấu hình & Nạp Firmware ESP32-S3 (PlatformIO)
 
-```bash
-git clone <repo-url>
-cd IoT-PJ1
-```
+1. Cài đặt tiện ích mở rộng **PlatformIO IDE** trên VS Code.
+2. Tạo file `include/secrets.h` với nội dung:
+   ```cpp
+   #ifndef SECRETS_H
+   #define SECRETS_H
 
-### 2. Cấu hình Backend
+   static const char* ssid = "TEN_WIFI_CUA_BAN";
+   static const char* password = "MAT_KHAU_WIFI";
 
-```bash
-cd backend
-npm install
-```
+   #define GROQ_API_KEY_STR "gsk_YOUR_GROQ_API_KEY"
 
-Tạo file `.env` trong thư mục `backend/`:
-
-```env
-# Supabase - lấy từ Supabase Dashboard > Project Settings > API
-SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=sb_secret_YOUR_SERVICE_ROLE_KEY
-
-# MQTT Broker (mặc định dùng HiveMQ public)
-MQTT_BROKER_URL=mqtt://broker.hivemq.com
-MQTT_PORT=1883
-```
-
-### 3. Cấu hình Frontend
-
-```bash
-cd frontend
-npm install
-```
-
-Tạo file `.env` trong thư mục `frontend/`:
-
-```env
-# Supabase - dùng Anon/Public key (KHÔNG phải Service Role Key)
-VITE_SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
-VITE_SUPABASE_ANON_KEY=sb_publishable_YOUR_ANON_KEY
-```
-
-### 4. Khởi tạo Database Supabase
-
-Vào **Supabase Dashboard → SQL Editor**, paste toàn bộ nội dung file `database/schema.sql` và chạy.
-
-### 5. Cấu hình Arduino
-
-Mở `arduino/secrets.h` và điền thông tin WiFi:
-
-```cpp
-const char* ssid     = "TEN_WIFI_CUA_BAN";
-const char* password = "MAT_KHAU_WIFI";
-```
-
-Nạp code `arduino/esp32.ino` lên board ESP32 bằng Arduino IDE.
+   #endif
+   ```
+3. Nối board ESP32-S3 qua cổng Type-C và kiểm tra cổng COM trong `platformio.ini`.
+4. Biên dịch và nạp code:
+   ```bash
+   pio run -t upload
+   ```
 
 ---
 
-## 🚀 Chạy Local
+### 2. Cấu hình & Chạy Backend Bridge
 
-### Khởi động Backend Bridge
+1. Di chuyển vào thư mục `backend/` và cài đặt dependencies:
+   ```bash
+   cd backend
+   npm install
+   ```
+2. Tạo file `.env` trong thư mục `backend/`:
+   ```env
+   SUPABASE_URL=https://ccvesdhnzlvfpdfhlesr.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY
+   MQTT_BROKER_URL=mqtt://broker.hivemq.com
+   MQTT_PORT=1883
+   MQTT_TOPIC_PREFIX=buivansang_iot_pj
+   GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+   GROQ_API_KEY=YOUR_GROQ_API_KEY
+   ```
+3. Chạy backend:
+   ```bash
+   # Chế độ phát triển (Auto-reload)
+   npm run dev
 
-```bash
-cd backend
-
-# Chạy development (nodemon tự restart khi sửa code)
-npm run dev
-
-# Hoặc chạy production
-npm start
-```
-
-**Output mong đợi khi khởi động thành công:**
-```
-[INFO]    --- KHỞI ĐỘNG HỆ THỐNG SMART HOME BRIDGE ---
-[SUCCESS] Đã kết nối kênh Realtime bảng "thietbi": trạng thái = SUBSCRIBED
-[SUCCESS] Đã kết nối kênh Realtime bảng "luat": trạng thái = SUBSCRIBED
-[SUCCESS] Kết nối thành công đến MQTT Broker!
-[INFO]    Đã subscribe thành công các topic: [...]
-```
-
-### Khởi động Frontend Dev Server
-
-```bash
-cd frontend
-npm run dev
-```
-
-Mở trình duyệt tại: `http://localhost:3000`
-
-### Chạy Simulator (khi không có ESP32 thật)
-
-```bash
-cd backend
-node scripts/simulator.js
-```
+   # Chế độ thông thường
+   npm start
+   ```
 
 ---
 
-## ☁️ Deploy
+### 3. Cấu hình & Chạy Frontend Web
 
-### Backend lên Render
-
-1. Push code lên GitHub
-2. Tạo **Web Service** mới trên Render, chọn repo và thư mục `backend/`
-3. Cấu hình:
-   - **Root Directory**: `backend`
-   - **Build Command**: `npm install`
-   - **Start Command**: `node bridge.js`
-4. Thêm Environment Variables trên Render Dashboard:
-   - `SUPABASE_URL` = `https://YOUR_PROJECT.supabase.co`
-   - `SUPABASE_SERVICE_ROLE_KEY` = `sb_secret_...`
-   - `RENDER_EXTERNAL_URL` = `https://YOUR_SERVICE.onrender.com` *(để self-ping chống spin-down)*
-
-### Frontend (Chạy cục bộ)
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Truy cập giao diện tại: `http://localhost:3000` (hoặc port do Vite cấp).
-Tạo file `.env.local` trong thư mục `frontend`:
-- `VITE_SUPABASE_URL` = `https://YOUR_PROJECT.supabase.co`
-- `VITE_SUPABASE_ANON_KEY` = `YOUR_ANON_KEY`
+1. Di chuyển vào thư mục `frontend/` và cài đặt packages:
+   ```bash
+   cd frontend
+   npm install
+   ```
+2. Tạo file `.env` trong thư mục `frontend/`:
+   ```env
+   VITE_SUPABASE_URL=https://ccvesdhnzlvfpdfhlesr.supabase.co
+   VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+   VITE_GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+   ```
+3. Khởi chạy dev server:
+   ```bash
+   npm run dev
+   ```
+4. Truy cập giao diện tại: `http://localhost:3000` (hoặc cổng hiển thị trên terminal).
 
 ---
 
-## 📡 MQTT Topics Reference
+## 📡 Danh mục MQTT Topics
 
-| Topic | Chiều | Mô tả |
-|-------|-------|--------|
-| `buivansang_iot_pj/temp` | ESP32 → Broker | Nhiệt độ (°C) |
-| `buivansang_iot_pj/hum` | ESP32 → Broker | Độ ẩm (%) |
-| `buivansang_iot_pj/lux` | ESP32 → Broker | Ánh sáng (lux) |
-| `buivansang_iot_pj/led` | Broker → ESP32 | Điều khiển Điều hòa (ON/OFF) |
-| `buivansang_iot_pj/led2` | Broker → ESP32 | Điều khiển Quạt (ON/OFF) |
-| `buivansang_iot_pj/led3` | Broker → ESP32 | Điều khiển Đèn (ON/OFF) |
-| `buivansang_iot_pj/automode` | Broker → ESP32 | Chế độ tự động Điều hòa |
-| `buivansang_iot_pj/automode2` | Broker → ESP32 | Chế độ tự động Quạt |
-| `buivansang_iot_pj/automode3` | Broker → ESP32 | Chế độ tự động Đèn |
-| `buivansang_iot_pj/led/state` | ESP32 → Broker | Trạng thái Điều hòa |
-| `buivansang_iot_pj/led2/state` | ESP32 → Broker | Trạng thái Quạt |
-| `buivansang_iot_pj/led3/state` | ESP32 → Broker | Trạng thái Đèn |
-| `buivansang_iot_pj/threshold/temp` | Broker → ESP32 | Ngưỡng nhiệt độ (retain) |
-| `buivansang_iot_pj/threshold/hum` | Broker → ESP32 | Ngưỡng độ ẩm (retain) |
-| `buivansang_iot_pj/threshold/lux` | Broker → ESP32 | Ngưỡng ánh sáng (retain) |
-
----
-
-## 🗄️ Database Schema
-
-| Bảng | Mô tả |
-|------|-------|
-| `dulieucambien` | Lịch sử đo đạc cảm biến từ ESP32 |
-| `thietbi` | Danh sách và trạng thái các thiết bị (điều hòa, quạt, đèn) |
-| `luat` | Cấu hình luật tự động hóa và ngưỡng cảm biến |
-| `nguoidung` | Thông tin người dùng (liên kết Supabase Auth) |
-| `nhatkyhoatdong` | Nhật ký mọi hành động điều khiển |
-| `lichhengio` | Lịch hẹn giờ bật/tắt thiết bị |
+| Topic | Hướng | Dữ liệu mẫu / Định dạng | Chức năng |
+|-------|-------|-------------------------|-----------|
+| `buivansang_iot_pj/temp` | ESP32 → Broker | `28.5` | Nhiệt độ môi trường (°C) |
+| `buivansang_iot_pj/hum` | ESP32 → Broker | `65.0` | Độ ẩm không khí (%) |
+| `buivansang_iot_pj/lux` | ESP32 → Broker | `320.0` | Cường độ ánh sáng (lux) |
+| `buivansang_iot_pj/led` | Broker ⇄ ESP32 | `ON` / `OFF` | Điều khiển Điều hòa |
+| `buivansang_iot_pj/led2` | Broker ⇄ ESP32 | `ON` / `OFF` | Điều khiển Quạt |
+| `buivansang_iot_pj/led3` | Broker ⇄ ESP32 | `ON` / `OFF` | Điều khiển Đèn |
+| `buivansang_iot_pj/tv/power` | Broker → ESP32 | `TOGGLE` / `ON` / `OFF` | Bật/tắt Smart TV qua IR |
+| `buivansang_iot_pj/tv/volume` | Broker → ESP32 | `UP` / `DOWN` / `MUTE` / `0-100` | Điều chỉnh âm lượng TV |
+| `buivansang_iot_pj/tv/channel`| Broker → ESP32 | `UP` / `DOWN` / `1..99` | Chuyển kênh TV |
+| `buivansang_iot_pj/automode` | Broker ⇄ ESP32 | `ON` / `OFF` | Chế độ tự động Điều hòa |
+| `buivansang_iot_pj/automode2`| Broker ⇄ ESP32 | `ON` / `OFF` | Chế độ tự động Quạt |
+| `buivansang_iot_pj/automode3`| Broker ⇄ ESP32 | `ON` / `OFF` | Chế độ tự động Đèn |
+| `buivansang_iot_pj/threshold/*` | Broker → ESP32 | `30.0` (retain = true) | Cập nhật ngưỡng tự động |
+| `buivansang_iot_pj/voice/command` | Web/App → AI | Raw Audio / Text | Gửi lệnh giọng nói xử lý |
 
 ---
 
-## 🔗 Endpoints
+## 👤 Tài khoản đăng nhập hệ thống
 
-### Backend Health Check
+Dưới đây là danh sách tài khoản đã được cấp quyền trong hệ thống Supabase Auth:
 
-```
-GET https://YOUR_RENDER_SERVICE.onrender.com/health
-```
-
-Response mẫu:
-```json
-{
-  "status": "ok",
-  "service": "Smart Home IoT Bridge",
-  "uptime_seconds": 3600,
-  "mqtt_connected": true,
-  "timestamp": "2026-07-09T07:00:00.000Z"
-}
-```
+| Tài khoản / Email | Tên hiển thị | Mật khẩu | Ghi chú |
+|-------------------|--------------|----------|---------|
+| `sa12@gmail.com` | **sang1** (sang12) | **`123456`** | Tài khoản kiểm thử của Sang |
+| `sangbv2206@gmail.com` | **sang** | **`123456`** | Tài khoản quản trị chính |
+| `sangbv12206@gmail.com` | **test** | **`123456`** | Tài khoản phụ |
+| `buivanchung22109@gmail.com` | **sang** | **`Admin@123`** | Tài khoản demo đồ án |
 
 ---
 
-## 👤 Tài khoản demo
+## 📝 Giấy phép (License)
 
-| Field | Value |
-|-------|-------|
-| Email | `buivanchung22109@gmail.com` |
-| Password | `Admin@123` |
-| Local Frontend URL | `http://localhost:3000` |
-
-
----
-
-## 📝 License
-
-MIT License — Dự án học tập IoT, PTIT 2026.
+Dự án phát triển phục vụ học tập & nghiên cứu môn **IoT Ứng Dụng**, Học viện Công nghệ Bưu chính Viễn thông (PTIT).
+Giấy phép: **MIT License**.
